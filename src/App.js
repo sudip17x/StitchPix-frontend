@@ -1,5 +1,5 @@
 // src/App.js
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   Upload,
   ImageIcon,
@@ -16,49 +16,54 @@ import {
 } from "lucide-react";
 
 /**
- * Option B - Advanced, production-ready App.js
- * - Controlled inputs
- * - Login / Signup
- * - Token & user saved to localStorage
- * - Model selector + API key UI
- * - Canvas fallback + NanoBanana / DeepAI helpers
- * - No unused variables (ESLint-friendly)
+ * Clean, production-ready single-file App.js (Option 1)
  *
- * Notes:
- * - Set REACT_APP_STITCHPIX_BACKEND in .env if needed.
- * - Tailwind classes are used in markup; replace or remove if not using Tailwind.
+ * - Controlled inputs
+ * - Token & user persisted to localStorage
+ * - Uses canvas fallback when external APIs fail
+ * - Minimal, explicit state (no unused vars)
+ * - Small UX touches (loading states, validation)
+ *
+ * NOTE: Update REACT_APP_STITCHPIX_BACKEND env var or change STITCHPIX_BACKEND value below.
  */
 
-const BACKEND = process.env.REACT_APP_STITCHPIX_BACKEND || "https://stitchpix-backend-1.onrender.com";
+const STITCHPIX_BACKEND = process.env.REACT_APP_STITCHPIX_BACKEND || "https://stitchpix-backend-1.onrender.com";
 
-export default function App() {
+export default function StitchPixAI() {
   // UI pages
-  const [page, setPage] = useState("login"); // login | upload | results
-
-  // Auth + user
+  const [currentPage, setCurrentPage] = useState("login"); // login | upload | results
   const [isSignUp, setIsSignUp] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showApiInput, setShowApiInput] = useState(false);
+
+  // Auth
+  const [user, setUser] = useState(null); // { id, name, email }
+  const [token, setToken] = useState(null);
+  const [authError, setAuthError] = useState("");
+  const [isLoadingAuth, setIsLoadingAuth] = useState(false);
+
+  // Controlled auth form
   const [authName, setAuthName] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
-  const [authError, setAuthError] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
 
   // App state
-  const [userPhoto, setUserPhoto] = useState(null);
-  const [dressPhoto, setDressPhoto] = useState(null);
-  const [generatedImages, setGeneratedImages] = useState([]);
+  const [userPhoto, setUserPhoto] = useState(null); // data URL
+  const [dressPhoto, setDressPhoto] = useState(null); // data URL
+  const [generatedImages, setGeneratedImages] = useState([]); // [{id, url, quality, source}]
+  const [apiKey, setApiKey] = useState("");
+  const [selectedModel, setSelectedModel] = useState("canvas");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Model / API management
+  // Models
   const aiModels = {
     free: [
-      { id: "canvas", name: "Canvas Merge (Free)", needsApi: false, description: "Local canvas merging fallback" },
-      { id: "nanobanana", name: "NanoBanana", needsApi: true, description: "Virtual try-on API" },
-      { id: "deepai", name: "DeepAI", needsApi: true, description: "Image editing API" },
+      { id: "canvas", name: "Canvas Merge (Free)", needsApi: false, description: "Basic browser merge" },
+      { id: "nanobanana", name: "NanoBanana", needsApi: true, description: "Cloud virtual try-on" },
+      { id: "deepai", name: "DeepAI", needsApi: true, description: "Image editing/generation" },
     ],
     paid: [
       { id: "replicate", name: "Replicate", needsApi: true, description: "Community models" },
@@ -66,12 +71,9 @@ export default function App() {
     ],
   };
   const allModels = [...aiModels.free, ...aiModels.paid];
-  const [selectedModel, setSelectedModel] = useState("canvas");
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
-  const [showApiInput, setShowApiInput] = useState(false);
-  const [apiKey, setApiKey] = useState("");
+  const currentModelData = allModels.find((m) => m.id === selectedModel);
 
-  // Misc refs
+  // Mounted ref
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -80,53 +82,55 @@ export default function App() {
     };
   }, []);
 
-  // hydrate from localStorage
+  // load from localStorage
   useEffect(() => {
-    const tk = localStorage.getItem("stitchpix_token");
-    const us = localStorage.getItem("stitchpix_user");
-    const ak = localStorage.getItem("stitchpix_api_key");
-    if (ak) setApiKey(ak);
-    if (tk) setToken(tk);
-    if (us) {
+    const savedToken = localStorage.getItem("stitchpix_token");
+    const savedUser = localStorage.getItem("stitchpix_user");
+    const savedApiKey = localStorage.getItem("stitchpix_api_key");
+    if (savedApiKey) setApiKey(savedApiKey);
+    if (savedToken) setToken(savedToken);
+    if (savedUser) {
       try {
-        const parsed = JSON.parse(us);
+        const parsed = JSON.parse(savedUser);
         setUser(parsed);
-        setPage("upload");
+        setCurrentPage("upload");
       } catch {
         localStorage.removeItem("stitchpix_user");
       }
     }
   }, []);
 
-  // persist apiKey
+  // persist API key
   useEffect(() => {
     if (apiKey) localStorage.setItem("stitchpix_api_key", apiKey);
     else localStorage.removeItem("stitchpix_api_key");
   }, [apiKey]);
 
-  // helpers
-  const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-  const isValidPassword = (p) => typeof p === "string" && p.length >= 6;
+  // validators
+  const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const isValidPassword = (pwd) => typeof pwd === "string" && pwd.length >= 6;
 
-  // AUTH: signup
+  // Auth handlers
   const handleSignUp = async () => {
     setAuthError("");
-    if (!authName || authName.trim().length < 2) return setAuthError("Name must be at least 2 characters");
+    if (!authName || authName.trim().length < 2) return setAuthError("Name must be at least 2 characters long");
     if (!isValidEmail(authEmail)) return setAuthError("Invalid email");
-    if (!isValidPassword(authPassword)) return setAuthError("Password must be >= 6 chars");
+    if (!isValidPassword(authPassword)) return setAuthError("Password must be at least 6 characters");
 
-    setAuthLoading(true);
+    setIsLoadingAuth(true);
     try {
-      const res = await fetch(`${BACKEND}/api/auth/signup`, {
+      const res = await fetch(`${STITCHPIX_BACKEND}/api/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: authName.trim(), email: authEmail.trim(), password: authPassword }),
       });
+
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAuthError(data?.message || `Signup failed (${res.status})`);
         return;
       }
+
       if (data.token) {
         localStorage.setItem("stitchpix_token", data.token);
         setToken(data.token);
@@ -134,64 +138,67 @@ export default function App() {
       const savedUser = data.user || { name: authName.trim(), email: authEmail.trim() };
       localStorage.setItem("stitchpix_user", JSON.stringify(savedUser));
       setUser(savedUser);
-      setPage("upload");
+      setCurrentPage("upload");
+
       setAuthName("");
       setAuthEmail("");
       setAuthPassword("");
     } catch (err) {
-      setAuthError("Signup failed. Check network or server.");
-      // eslint-disable-next-line no-console
-      console.error("signup error", err);
+      console.error("signup error:", err);
+      setAuthError("Signup failed. Check network or try again.");
     } finally {
-      if (mountedRef.current) setAuthLoading(false);
+      if (mountedRef.current) setIsLoadingAuth(false);
     }
   };
 
-  // AUTH: login
   const handleLogin = async () => {
     setAuthError("");
-    if (!isValidEmail(authEmail)) return setAuthError("Enter valid email");
-    if (!authPassword) return setAuthError("Enter password");
+    if (!isValidEmail(authEmail)) return setAuthError("Enter a valid email");
+    if (!authPassword) return setAuthError("Please enter your password");
 
-    setAuthLoading(true);
+    setIsLoadingAuth(true);
     try {
-      const res = await fetch(`${BACKEND}/api/auth/login`, {
+      const res = await fetch(`${STITCHPIX_BACKEND}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: authEmail.trim(), password: authPassword }),
       });
+
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAuthError(data?.message || `Login failed (${res.status})`);
         return;
       }
+
       if (data.token) {
         localStorage.setItem("stitchpix_token", data.token);
         setToken(data.token);
       }
+
       const savedUser = data.user || { email: authEmail.trim() };
       localStorage.setItem("stitchpix_user", JSON.stringify(savedUser));
       setUser(savedUser);
-      setPage("upload");
+      setCurrentPage("upload");
+
       setAuthEmail("");
       setAuthPassword("");
     } catch (err) {
-      setAuthError("Login failed. Check network or server.");
-      // eslint-disable-next-line no-console
-      console.error("login error", err);
+      console.error("login error:", err);
+      setAuthError("Login failed. Check your internet or server.");
     } finally {
-      if (mountedRef.current) setAuthLoading(false);
+      if (mountedRef.current) setIsLoadingAuth(false);
     }
   };
 
   const handleAuth = () => {
-    return isSignUp ? handleSignUp() : handleLogin();
+    if (isSignUp) return handleSignUp();
+    return handleLogin();
   };
 
-  // Image upload
+  // image helpers
   const validateImageFile = (file) => {
-    if (!file.type.startsWith("image/")) return "Upload an image file (jpg/png)";
-    if (file.size > 6 * 1024 * 1024) return "Image too large (max 6MB)";
+    if (!file.type.startsWith("image/")) return "Please upload an image file (jpg, png, etc.)";
+    if (file.size > 6 * 1024 * 1024) return "Image too large. Max 6MB.";
     return null;
   };
 
@@ -204,6 +211,7 @@ export default function App() {
       setErrorMessage(err);
       return;
     }
+
     setIsUploadingImage(true);
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -215,121 +223,131 @@ export default function App() {
     };
     reader.onerror = () => {
       setIsUploadingImage(false);
-      setErrorMessage("Failed to read file");
+      setErrorMessage("Failed to read image file.");
     };
     reader.readAsDataURL(file);
   };
 
-  // External APIs (optional)
-  const base64ToBlob = (base64) => {
-    const byteString = atob(base64.split(",")[1]);
-    const mimeString = base64.split(",")[0].split(":")[1].split(";")[0];
-    const ab = new ArrayBuffer(byteString.length);
-    const ia = new Uint8Array(ab);
-    for (let i = 0; i < byteString.length; i += 1) ia[i] = byteString.charCodeAt(i);
-    return new Blob([ab], { type: mimeString });
-  };
-
-  const callNanoBanana = async (uData, dData) => {
+  // optional external API helpers
+  const callNanoBanana = async (userPhotoData, dressPhotoData) => {
     if (!apiKey) throw new Error("NanoBanana requires API key");
-    const form = new FormData();
-    form.append("person_image", base64ToBlob(uData), "user.jpg");
-    form.append("garment_image", base64ToBlob(dData), "dress.jpg");
+    const base64ToBlob = (base64) => {
+      const byteString = atob(base64.split(",")[1]);
+      const mimeString = base64.split(",")[0].split(":")[1].split(";")[0];
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+      return new Blob([ab], { type: mimeString });
+    };
+
+    const formData = new FormData();
+    formData.append("person_image", base64ToBlob(userPhotoData), "user.jpg");
+    formData.append("garment_image", base64ToBlob(dressPhotoData), "dress.jpg");
+
     const res = await fetch("https://api.nanobanana.ai/api/try-on", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
-      body: form,
+      body: formData,
     });
-    if (!res.ok) throw new Error(`NanoBanana failed (${res.status})`);
-    const data = await res.json();
-    if (data.output_url || data.image_url) return [{ id: 1, url: data.output_url || data.image_url, quality: "NanoBanana", source: "nanobanana" }];
-    throw new Error("NanoBanana returned no image");
+
+    if (!res.ok) throw new Error(`NanoBanana API failed (${res.status})`);
+    const result = await res.json();
+    if (result.output_url || result.image_url) {
+      return [{ id: 1, url: result.output_url || result.image_url, quality: "AI Enhanced (NanoBanana)", source: "nanobanana" }];
+    }
+    throw new Error("NanoBanana returned no image URL");
   };
 
-  const callDeepAI = async (uData) => {
+  const callDeepAI = async (userPhotoData, dressPhotoData) => {
     if (!apiKey) throw new Error("DeepAI requires API key");
     const res = await fetch("https://api.deepai.org/api/image-editor", {
       method: "POST",
       headers: { "api-key": apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ image: uData, text: "merge with dress image and create virtual try-on" }),
+      body: JSON.stringify({ image: userPhotoData, text: "merge with dress image and create virtual try-on" }),
     });
     if (!res.ok) throw new Error(`DeepAI failed (${res.status})`);
     const data = await res.json();
-    if (data.output_url) return [{ id: 1, url: data.output_url, quality: "DeepAI", source: "deepai" }];
+    if (data.output_url) return [{ id: 1, url: data.output_url, quality: "AI Enhanced (DeepAI)", source: "deepai" }];
     throw new Error("DeepAI returned no image");
   };
 
-  // Canvas fallback
-  const createMergedImages = (uData, dData) =>
+  // canvas fallback
+  const createMergedImages = (userPhotoData, dressPhotoData) =>
     new Promise((resolve) => {
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
-      const uImg = new Image();
-      const dImg = new Image();
-      uImg.crossOrigin = "anonymous";
-      dImg.crossOrigin = "anonymous";
+      const userImg = new Image();
+      const dressImg = new Image();
+      userImg.crossOrigin = "anonymous";
+      dressImg.crossOrigin = "anonymous";
 
-      uImg.onload = () => {
-        dImg.onload = () => {
-          canvas.width = dImg.width;
-          canvas.height = dImg.height;
-          ctx.drawImage(dImg, 0, 0, canvas.width, canvas.height);
+      userImg.onload = () => {
+        dressImg.onload = () => {
+          canvas.width = dressImg.width;
+          canvas.height = dressImg.height;
+          ctx.drawImage(dressImg, 0, 0, canvas.width, canvas.height);
 
-          const faceW = Math.round(canvas.width * 0.25);
-          const faceH = Math.round(faceW * 1.2);
-          const faceX = Math.round((canvas.width - faceW) / 2);
+          const faceWidth = Math.round(canvas.width * 0.25);
+          const faceHeight = Math.round(faceWidth * 1.2);
+          const faceX = Math.round((canvas.width - faceWidth) / 2);
           const faceY = Math.round(canvas.height * 0.08);
 
-          const uX = Math.round(uImg.width * 0.25);
-          const uY = Math.round(uImg.height * 0.1);
-          const uW = Math.round(uImg.width * 0.5);
-          const uH = Math.round(uImg.height * 0.4);
+          const uX = Math.round(userImg.width * 0.25);
+          const uY = Math.round(userImg.height * 0.1);
+          const uW = Math.round(userImg.width * 0.5);
+          const uH = Math.round(userImg.height * 0.4);
 
           ctx.save();
           if (typeof ctx.roundRect === "function") {
             ctx.beginPath();
-            ctx.roundRect(faceX, faceY, faceW, faceH, 36);
+            ctx.roundRect(faceX, faceY, faceWidth, faceHeight, 36);
             ctx.clip();
           } else {
             const r = 36;
             ctx.beginPath();
             ctx.moveTo(faceX + r, faceY);
-            ctx.arcTo(faceX + faceW, faceY, faceX + faceW, faceY + faceH, r);
-            ctx.arcTo(faceX + faceW, faceY + faceH, faceX, faceY + faceH, r);
-            ctx.arcTo(faceX, faceY + faceH, faceX, faceY, r);
-            ctx.arcTo(faceX, faceY, faceX + faceW, faceY, r);
+            ctx.arcTo(faceX + faceWidth, faceY, faceX + faceWidth, faceY + faceHeight, r);
+            ctx.arcTo(faceX + faceWidth, faceY + faceHeight, faceX, faceY + faceHeight, r);
+            ctx.arcTo(faceX, faceY + faceHeight, faceX, faceY, r);
+            ctx.arcTo(faceX, faceY, faceX + faceWidth, faceY, r);
             ctx.closePath();
             ctx.clip();
           }
 
           try {
-            ctx.drawImage(uImg, uX, uY, uW, uH, faceX, faceY, faceW, faceH);
+            ctx.drawImage(userImg, uX, uY, uW, uH, faceX, faceY, faceWidth, faceHeight);
           } catch {
-            // fallback to drawing scaled whole image
-            ctx.drawImage(uImg, faceX, faceY, faceW, faceH);
+            ctx.drawImage(userImg, faceX, faceY, faceWidth, faceHeight);
           }
           ctx.restore();
 
-          const url = canvas.toDataURL("image/png");
-          resolve([{ id: 1, url, quality: "Canvas Merged", source: "canvas" }]);
+          const mergedUrl = canvas.toDataURL("image/png", 1.0);
+          resolve([{ id: 1, url: mergedUrl, quality: "Canvas Merged", source: "canvas" }]);
         };
-        dImg.onerror = () => resolve([{ id: 1, url: uData, quality: "Original", source: "original" }]);
-        dImg.src = dData;
+
+        dressImg.onerror = () => {
+          resolve([{ id: 1, url: userPhotoData, quality: "Original", source: "original" }]);
+        };
+
+        dressImg.src = dressPhotoData;
       };
-      uImg.onerror = () => resolve([{ id: 1, url: dData, quality: "Original", source: "original" }]);
-      uImg.src = uData;
+
+      userImg.onerror = () => {
+        resolve([{ id: 1, url: dressPhotoData, quality: "Original", source: "original" }]);
+      };
+
+      userImg.src = userPhotoData;
     });
 
   // generate
   const handleGenerate = async () => {
     setErrorMessage("");
     if (!userPhoto || !dressPhoto) {
-      setErrorMessage("Please upload both photos.");
+      setErrorMessage("Upload both your photo and the dress model.");
       return;
     }
-    const model = allModels.find((m) => m.id === selectedModel) || allModels[0];
-    if (model.needsApi && !apiKey) {
-      setErrorMessage(`API key required for ${model.name}`);
+    if (currentModelData?.needsApi && !apiKey) {
+      setErrorMessage(`API key required for ${currentModelData.name}`);
       return;
     }
 
@@ -337,127 +355,148 @@ export default function App() {
     try {
       let result;
       if (selectedModel === "nanobanana") result = await callNanoBanana(userPhoto, dressPhoto);
-      else if (selectedModel === "deepai") result = await callDeepAI(userPhoto);
+      else if (selectedModel === "deepai") result = await callDeepAI(userPhoto, dressPhoto);
       else result = await createMergedImages(userPhoto, dressPhoto);
 
-      if (!Array.isArray(result) || result.length === 0) throw new Error("Model returned no images");
+      if (!Array.isArray(result) || result.length === 0) throw new Error("No images returned from model");
       setGeneratedImages(result);
-      setPage("results");
+      setCurrentPage("results");
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("generate error", err);
-      setErrorMessage(`${err.message} — falling back to canvas...`);
+      console.error("generate error:", err);
+      setErrorMessage(`${err?.message || "Generation failed"} — falling back to canvas merge...`);
       try {
         const fallback = await createMergedImages(userPhoto, dressPhoto);
         setGeneratedImages(fallback);
-        setPage("results");
+        setCurrentPage("results");
       } catch (fbErr) {
-        // eslint-disable-next-line no-console
-        console.error("fallback error", fbErr);
-        setErrorMessage("Generation failed.");
+        console.error("fallback error:", fbErr);
+        setErrorMessage(`Generation failed: ${fbErr?.message || "unknown error"}`);
       }
     } finally {
       if (mountedRef.current) setIsGenerating(false);
     }
   };
 
-  // download
-  const handleDownload = (url, name = "result") => {
+  // utilities
+  const handleDownload = (imageUrl, imageName = "result") => {
     try {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `stitchpix-${name}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      const link = document.createElement("a");
+      link.href = imageUrl;
+      link.download = `stitchpix-${imageName}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("download error", err);
-      setErrorMessage("Download failed");
+      console.error("download error:", err);
+      setErrorMessage("Download failed.");
     }
   };
 
-  // reset / logout
   const handleReset = () => {
     setUserPhoto(null);
     setDressPhoto(null);
     setGeneratedImages([]);
     setErrorMessage("");
-    setPage("upload");
+    setCurrentPage("upload");
   };
 
-  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const handleLogout = () => setShowLogoutConfirm(true);
   const confirmLogout = () => {
     setUser(null);
     setToken(null);
     localStorage.removeItem("stitchpix_token");
     localStorage.removeItem("stitchpix_user");
+    // keep apiKey if user wants
     setUserPhoto(null);
     setDressPhoto(null);
     setGeneratedImages([]);
     setShowLogoutConfirm(false);
-    setPage("login");
+    setCurrentPage("login");
   };
   const cancelLogout = () => setShowLogoutConfirm(false);
 
-  // small UI bits
-  const AuthError = ({ msg }) =>
-    msg ? (
+  // small components
+  const AuthErrorBox = ({ message }) =>
+    message ? (
       <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
         <AlertCircle className="w-4 h-4" />
-        <div>{msg}</div>
+        <div>{message}</div>
       </div>
     ) : null;
 
-  // page render
-  if (page === "login") {
+  // JSX pages
+  if (currentPage === "login") {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400">
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-600 to-pink-500 rounded-full mb-3">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-600 to-pink-500 rounded-full mb-4">
               <Sparkles className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-2xl font-bold text-gray-800">StitchPix AI</h1>
-            <p className="text-gray-600">Virtual Try-On</p>
+            <h1 className="text-3xl font-bold text-gray-800">StitchPix AI</h1>
+            <p className="text-gray-600 mt-2">Virtual Try-On Experience</p>
           </div>
 
-          <AuthError msg={authError} />
+          <AuthErrorBox message={authError} />
 
           <div className="space-y-4">
             {isSignUp && (
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Full name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-                  <input className="w-full pl-10 pr-3 py-2 border rounded-lg" value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder="John Doe" />
+                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <input
+                    type="text"
+                    value={authName}
+                    onChange={(e) => setAuthName(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="John Doe"
+                    name="name"
+                  />
                 </div>
               </div>
             )}
 
             <div>
-              <label className="block text-sm text-gray-700 mb-1">Email</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email *</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-                <input className="w-full pl-10 pr-3 py-2 border rounded-lg" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="you@example.com" />
+                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="you@example.com"
+                  name="email"
+                />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm text-gray-700 mb-1">Password</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Password *</label>
               <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-                <input type="password" className="w-full pl-10 pr-3 py-2 border rounded-lg" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="••••••••" />
+                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="••••••••"
+                  name="password"
+                />
               </div>
             </div>
 
-            <button onClick={handleAuth} disabled={authLoading} className="w-full bg-gradient-to-r from-purple-600 to-pink-500 text-white py-2 rounded-lg hover:shadow-md disabled:opacity-60">
-              {authLoading ? "Processing..." : isSignUp ? "Create account" : "Login"}
+            <button
+              onClick={handleAuth}
+              disabled={isLoadingAuth}
+              className="w-full bg-gradient-to-r from-purple-600 to-pink-500 text-white py-3 rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition disabled:opacity-50"
+            >
+              {isLoadingAuth ? "Processing..." : isSignUp ? "Create Account" : "Login to Account"}
             </button>
           </div>
 
-          <div className="mt-4 text-center">
+          <div className="mt-6 text-center">
             <button
               onClick={() => {
                 setIsSignUp(!isSignUp);
@@ -466,44 +505,44 @@ export default function App() {
                 setAuthEmail("");
                 setAuthPassword("");
               }}
-              className="text-purple-600 hover:underline"
+              className="text-purple-600 hover:text-purple-800 font-medium"
             >
-              {isSignUp ? "Already have an account? Login" : "Don't have an account? Sign up"}
+              {isSignUp ? "Already have an account? Login" : "Don't have an account? Sign Up"}
             </button>
           </div>
 
-          <div className="mt-4 text-xs text-gray-500 text-center">🔒 Your data is stored locally (token & user).</div>
+          <div className="mt-6 text-center text-xs text-gray-500">
+            <p>🔒 Your data is stored locally and securely</p>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (page === "upload") {
-    const currentModel = allModels.find((m) => m.id === selectedModel) || allModels[0];
+  if (currentPage === "upload") {
     return (
       <div className="min-h-screen bg-gray-50">
-        {/* logout confirm */}
         {showLogoutConfirm && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
-            <div className="bg-white rounded-lg p-6 shadow-lg max-w-sm w-full">
-              <h3 className="text-lg font-bold mb-2">Confirm logout</h3>
-              <p className="text-sm text-gray-600 mb-4">Are you sure?</p>
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4">
+              <h3 className="text-xl font-bold text-gray-800 mb-3">Confirm Logout</h3>
+              <p className="text-gray-600 mb-6">Are you sure you want to logout?</p>
               <div className="flex gap-3">
-                <button onClick={cancelLogout} className="flex-1 px-3 py-2 bg-gray-200 rounded">Cancel</button>
-                <button onClick={confirmLogout} className="flex-1 px-3 py-2 bg-red-600 text-white rounded">Logout</button>
+                <button onClick={cancelLogout} className="flex-1 px-4 py-2 bg-gray-200 rounded-lg">Cancel</button>
+                <button onClick={confirmLogout} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg">Logout</button>
               </div>
             </div>
           </div>
         )}
 
         <div className="bg-white shadow-sm">
-          <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div className="flex items-center gap-2">
               <Sparkles className="w-6 h-6 text-purple-600" />
-              <h1 className="text-xl font-bold">StitchPix AI</h1>
+              <h1 className="text-2xl font-bold text-gray-800">StitchPix AI</h1>
             </div>
             <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-600">Welcome, <span className="font-semibold">{user?.name || user?.email}</span></div>
+              <span className="text-sm text-gray-600">Welcome, <span className="font-semibold">{user?.name || user?.email}</span></span>
               <button onClick={handleLogout} className="flex items-center gap-2 text-gray-600 hover:text-gray-800">
                 <LogOut className="w-5 h-5" /> Logout
               </button>
@@ -511,93 +550,117 @@ export default function App() {
           </div>
         </div>
 
-        <div className="max-w-6xl mx-auto px-4 py-8">
-          <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold mb-2">Virtual Try-On Studio</h2>
-            <p className="text-gray-600">Upload your photo and a model photo to preview the try-on.</p>
-          </div>
+        <div className="max-w-6xl mx-auto px-4 py-12">
+          <div className="text-center mb-12">
+            <h2 className="text-4xl font-bold text-gray-800 mb-4">Virtual Try-On Studio</h2>
+            <p className="text-gray-600 text-lg">Upload your photo and a dress model to see yourself wearing it!</p>
 
-          {/* Model selector & API key */}
-          <div className="max-w-md mx-auto mb-8">
-            <label className="block text-sm mb-2">Select AI model</label>
-            <div className="relative">
-              <button onClick={() => setShowModelDropdown(!showModelDropdown)} className="w-full px-4 py-3 bg-white border rounded flex items-center justify-between">
-                <div className="text-left">
-                  <div className="font-medium">{currentModel.name}</div>
-                  <div className="text-xs text-gray-500">{currentModel.description}</div>
-                </div>
-                <ChevronDown className={`w-5 h-5 ${showModelDropdown ? "rotate-180" : ""}`} />
-              </button>
+            {/* Model selector */}
+            <div className="mt-8 max-w-md mx-auto">
+              <label className="block text-sm font-medium text-gray-700 mb-3">Select AI Model</label>
+              <div className="relative">
+                <button onClick={() => setShowModelDropdown(!showModelDropdown)} className="w-full px-4 py-3 bg-white border-2 border-purple-300 rounded-lg flex items-center justify-between">
+                  <div className="text-left">
+                    <p className="font-semibold text-gray-800">{currentModelData?.name}</p>
+                    <p className="text-xs text-gray-500">{currentModelData?.description}</p>
+                  </div>
+                  <ChevronDown className={`w-5 h-5 text-gray-600 ${showModelDropdown ? "rotate-180" : ""}`} />
+                </button>
 
-              {showModelDropdown && (
-                <div className="absolute left-0 right-0 mt-2 bg-white border rounded shadow-lg z-30 max-h-72 overflow-y-auto">
-                  <div className="p-2 border-b bg-green-50 text-xs font-semibold text-green-700">Free Models</div>
-                  {aiModels.free.map((m) => (
-                    <button key={m.id} onClick={() => { setSelectedModel(m.id); setShowModelDropdown(false); if (!m.needsApi) setShowApiInput(false); }} className={`w-full text-left px-4 py-3 border-b hover:bg-purple-50 ${selectedModel === m.id ? "bg-purple-100 border-l-4 border-l-purple-600" : ""}`}>
-                      <div className="font-medium">{m.name}</div>
-                      <div className="text-xs text-gray-500">{m.description}{m.needsApi && <span className="ml-2 inline-block text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">API</span>}</div>
-                    </button>
-                  ))}
-                  <div className="p-2 border-b bg-blue-50 text-xs font-semibold text-blue-700">Paid Models</div>
-                  {aiModels.paid.map((m) => (
-                    <button key={m.id} onClick={() => { setSelectedModel(m.id); setShowModelDropdown(false); }} className={`w-full text-left px-4 py-3 border-b hover:bg-purple-50 ${selectedModel === m.id ? "bg-purple-100 border-l-4 border-l-purple-600" : ""}`}>
-                      <div className="font-medium">{m.name}</div>
-                      <div className="text-xs text-gray-500">{m.description}<span className="ml-2 inline-block text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">API</span></div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                {showModelDropdown && (
+                  <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-purple-300 rounded-lg shadow-lg z-10 max-h-96 overflow-y-auto">
+                    <div className="p-3 bg-green-50 border-b sticky top-0"><p className="text-xs font-bold text-green-700 uppercase">Free Models</p></div>
+                    {aiModels.free.map((model) => (
+                      <button key={model.id} onClick={() => { setSelectedModel(model.id); setShowModelDropdown(false); if (!model.needsApi) setShowApiInput(false); }} className={`w-full text-left px-4 py-3 border-b hover:bg-purple-50 ${selectedModel === model.id ? "bg-purple-100 border-l-4 border-l-purple-600" : ""}`}>
+                        <p className="font-medium text-gray-800">{model.name}</p>
+                        <p className="text-xs text-gray-600 mt-1">{model.description}</p>
+                        {model.needsApi && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded inline-block mt-2">API Key Required</span>}
+                      </button>
+                    ))}
 
-            {currentModel.needsApi && (
-              <div className="mt-3">
-                <button onClick={() => setShowApiInput(!showApiInput)} className="text-purple-600 hover:underline mb-2">{showApiInput ? "Hide API input" : (apiKey ? "Update API key" : "Enter API key")}</button>
-                {showApiInput && (
-                  <div className="bg-purple-50 border rounded p-3">
-                    <label className="block text-xs mb-1">API Key for {currentModel.name}</label>
-                    <input className="w-full px-3 py-2 border rounded" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Enter API key" />
-                    <div className="text-xs text-gray-500 mt-1">Stored locally in your browser only</div>
+                    <div className="p-3 bg-blue-50 border-b sticky top-0"><p className="text-xs font-bold text-blue-700 uppercase">Paid Models</p></div>
+                    {aiModels.paid.map((model) => (
+                      <button key={model.id} onClick={() => { setSelectedModel(model.id); setShowModelDropdown(false); }} className={`w-full text-left px-4 py-3 border-b hover:bg-purple-50 ${selectedModel === model.id ? "bg-purple-100 border-l-4 border-l-purple-600" : ""}`}>
+                        <p className="font-medium text-gray-800">{model.name}</p>
+                        <p className="text-xs text-gray-600 mt-1">{model.description}</p>
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded inline-block mt-2">API Key Required</span>
+                      </button>
+                    ))}
                   </div>
                 )}
-                {apiKey && !showApiInput && <div className="text-sm text-green-600 mt-2">✓ API Key configured</div>}
+              </div>
+            </div>
+
+            {/* API Key input */}
+            {currentModelData?.needsApi && (
+              <div className="mt-6 max-w-md mx-auto">
+                <button onClick={() => setShowApiInput(!showApiInput)} className="text-purple-600 hover:text-purple-800 mb-2">
+                  {showApiInput ? "▼" : "▶"} {apiKey ? "Update" : "Enter"} API Key
+                </button>
+
+                {showApiInput && (
+                  <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">API Key for {currentModelData?.name}</label>
+                    <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Enter your API key" className="w-full px-4 py-2 border rounded-lg" />
+                    <p className="text-xs text-gray-500 mt-2">Your API key is stored locally only</p>
+                  </div>
+                )}
+
+                {apiKey && !showApiInput && <div className="text-sm text-green-600 font-medium">✓ API Key configured</div>}
               </div>
             )}
           </div>
 
-          {/* Error */}
+          {/* Error message */}
           {errorMessage && (
-            <div className="max-w-2xl mx-auto mb-6 p-3 bg-yellow-50 border rounded flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-yellow-600" />
-              <div className="text-yellow-800 text-sm">{errorMessage}</div>
+            <div className="mb-6 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-lg flex items-start gap-3 max-w-2xl mx-auto">
+              <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+              <div><p className="text-yellow-800 text-sm">{errorMessage}</p></div>
             </div>
           )}
 
           {/* Upload panels */}
           <div className="grid md:grid-cols-2 gap-8 mb-8">
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="font-semibold mb-3 flex items-center gap-2"><ImageIcon className="w-5 h-5 text-purple-600" /> Your face photo</h3>
-              <label className="block cursor-pointer">
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <h3 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2"><ImageIcon className="w-5 h-5 text-purple-600" />Your Face Photo</h3>
+              <label className="cursor-pointer">
                 <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e, "user")} className="hidden" />
-                <div className="h-72 border-4 border-dashed rounded flex items-center justify-center bg-purple-50 hover:border-purple-400 transition">
-                  {userPhoto ? <img src={userPhoto} alt="user" className="max-h-full object-contain rounded" /> : (
+                <div className="border-4 border-dashed border-purple-300 rounded-xl h-80 flex items-center justify-center hover:border-purple-500 transition bg-purple-50">
+                  {isUploadingImage ? (
                     <div className="text-center">
-                      <Upload className="w-16 h-16 text-purple-400 mx-auto mb-3" />
-                      <div className="text-gray-600">Upload face photo (clear, front-facing)</div>
+                      <RefreshCw className="w-12 h-12 animate-spin text-purple-400 mx-auto mb-2" />
+                      <p className="text-gray-600">Processing image...</p>
+                    </div>
+                  ) : userPhoto ? (
+                    <img src={userPhoto} alt="User" className="max-h-full max-w-full object-contain rounded-lg" />
+                  ) : (
+                    <div className="text-center">
+                      <Upload className="w-16 h-16 text-purple-400 mx-auto mb-4" />
+                      <p className="text-gray-600 font-medium">Upload your face photo</p>
+                      <p className="text-gray-400 text-sm mt-2">Clear face shot recommended</p>
                     </div>
                   )}
                 </div>
               </label>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="font-semibold mb-3 flex items-center gap-2"><ImageIcon className="w-5 h-5 text-pink-600" /> Model wearing dress</h3>
-              <label className="block cursor-pointer">
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <h3 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2"><ImageIcon className="w-5 h-5 text-pink-600" />Model with Dress</h3>
+              <label className="cursor-pointer">
                 <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e, "dress")} className="hidden" />
-                <div className="h-72 border-4 border-dashed rounded flex items-center justify-center bg-pink-50 hover:border-pink-400 transition">
-                  {dressPhoto ? <img src={dressPhoto} alt="dress" className="max-h-full object-contain rounded" /> : (
+                <div className="border-4 border-dashed border-pink-300 rounded-xl h-80 flex items-center justify-center hover:border-pink-500 transition bg-pink-50">
+                  {isUploadingImage ? (
                     <div className="text-center">
-                      <Upload className="w-16 h-16 text-pink-400 mx-auto mb-3" />
-                      <div className="text-gray-600">Upload full-body model photo</div>
+                      <RefreshCw className="w-12 h-12 animate-spin text-pink-400 mx-auto mb-2" />
+                      <p className="text-gray-600">Processing image...</p>
+                    </div>
+                  ) : dressPhoto ? (
+                    <img src={dressPhoto} alt="Dress" className="max-h-full max-w-full object-contain rounded-lg" />
+                  ) : (
+                    <div className="text-center">
+                      <Upload className="w-16 h-16 text-pink-400 mx-auto mb-4" />
+                      <p className="text-gray-600 font-medium">Upload model wearing dress</p>
+                      <p className="text-gray-400 text-sm mt-2">Full body photo works best</p>
                     </div>
                   )}
                 </div>
@@ -606,28 +669,29 @@ export default function App() {
           </div>
 
           <div className="text-center">
-            <button onClick={handleGenerate} disabled={isGenerating || !userPhoto || !dressPhoto || (currentModel.needsApi && !apiKey)} className="px-6 py-3 rounded-lg bg-gradient-to-r from-purple-600 to-pink-500 text-white font-semibold inline-flex items-center gap-3 disabled:opacity-60">
-              {isGenerating ? <><RefreshCw className="w-5 h-5 animate-spin" /> Processing...</> : <><Sparkles className="w-5 h-5" /> Generate</>}
+            <button onClick={handleGenerate} disabled={isGenerating || !userPhoto || !dressPhoto || (currentModelData?.needsApi && !apiKey)} className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-12 py-4 rounded-xl font-semibold text-lg hover:shadow-xl transform hover:scale-105 transition disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center gap-3 mx-auto">
+              {isGenerating ? (<><RefreshCw className="w-6 h-6 animate-spin" /> Processing...</>) : (<><Sparkles className="w-6 h-6" /> Generate with {currentModelData?.name}</>)}
             </button>
-            <div className="text-sm text-gray-500 mt-2">{currentModel.needsApi ? (apiKey ? "✓ API key ready" : "⚠️ API key required") : "✓ Canvas fallback available"}</div>
+            <p className="text-sm text-gray-500 mt-3">{currentModelData?.needsApi && apiKey ? "✓ API Connected - Ready" : currentModelData?.needsApi ? "⚠️ API Key Required" : "✓ Ready to Generate"}</p>
           </div>
         </div>
       </div>
     );
   }
 
-  if (page === "results") {
-    const result = generatedImages?.[0] || null;
+  // results page
+  if (currentPage === "results") {
+    const result = generatedImages?.[0];
     return (
       <div className="min-h-screen bg-gray-50">
         {showLogoutConfirm && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
-            <div className="bg-white rounded-lg p-6 shadow-lg max-w-sm w-full">
-              <h3 className="text-lg font-bold mb-2">Confirm logout</h3>
-              <p className="text-sm text-gray-600 mb-4">Are you sure?</p>
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4">
+              <h3 className="text-xl font-bold text-gray-800 mb-3">Confirm Logout</h3>
+              <p className="text-gray-600 mb-6">Are you sure you want to logout?</p>
               <div className="flex gap-3">
-                <button onClick={cancelLogout} className="flex-1 px-3 py-2 bg-gray-200 rounded">Cancel</button>
-                <button onClick={confirmLogout} className="flex-1 px-3 py-2 bg-red-600 text-white rounded">Logout</button>
+                <button onClick={cancelLogout} className="flex-1 px-4 py-2 bg-gray-200 rounded-lg">Cancel</button>
+                <button onClick={confirmLogout} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg">Logout</button>
               </div>
             </div>
           </div>
@@ -635,34 +699,38 @@ export default function App() {
 
         <div className="bg-white shadow-sm">
           <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
-            <div className="flex items-center gap-3"><Sparkles className="w-6 h-6 text-purple-600" /><h1 className="text-xl font-bold">StitchPix AI</h1></div>
-            <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-600">Welcome, <span className="font-semibold">{user?.name || user?.email}</span></div>
-              <button onClick={handleLogout} className="flex items-center gap-2 text-gray-600 hover:text-gray-800"><LogOut className="w-5 h-5" /> Logout</button>
-            </div>
+            <div className="flex items-center gap-2"><Sparkles className="w-6 h-6 text-purple-600" /><h1 className="text-2xl font-bold text-gray-800">StitchPix AI</h1></div>
+            <button onClick={handleLogout} className="flex items-center gap-2 text-gray-600 hover:text-gray-800"><LogOut className="w-5 h-5" /> Logout</button>
           </div>
         </div>
 
-        <div className="max-w-4xl mx-auto px-4 py-12">
-          <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold mb-2">Your Result</h2>
-            <p className="text-gray-600">Generated with {result?.source || "model"}</p>
+        <div className="max-w-6xl mx-auto px-4 py-12">
+          <div className="text-center mb-12">
+            <h2 className="text-4xl font-bold text-gray-800 mb-4">✨ Your Result</h2>
+            <p className="text-gray-600 text-lg">Generated with {result?.source === "canvas" ? "Canvas Merge" : result?.source === "nanobanana" ? "NanoBanana" : result?.source === "deepai" ? "DeepAI" : "AI Model"}</p>
           </div>
 
-          <div className="bg-white rounded shadow overflow-hidden">
-            <img src={result?.url} alt="result" className="w-full object-contain max-h-[520px]" onError={(e) => { e.target.src = "https://via.placeholder.com/800x800?text=Image+not+available"; }} />
-            <div className="p-6 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <div className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-3 py-1 rounded-full text-sm">{result?.quality}</div>
+          <div className="max-w-2xl mx-auto">
+            <div className="bg-white rounded-xl shadow-2xl overflow-hidden">
+              <img src={result?.url} alt="Merged Result" className="w-full h-auto object-contain" onError={(e) => { e.target.src = "https://via.placeholder.com/500x500?text=Image+not+available"; }} />
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <span className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-4 py-2 rounded-full text-sm font-semibold">✨ {result?.quality}</span>
+                </div>
                 <div className="flex gap-3">
-                  <button onClick={() => handleDownload(result?.url, "stitchpix-result")} className="px-3 py-2 bg-purple-600 text-white rounded inline-flex items-center gap-2"><Download className="w-4 h-4" /> Download</button>
-                  <button onClick={() => { if (navigator.share) { navigator.share({ title: "My StitchPix result", url: window.location.href }); } else { navigator.clipboard.writeText(window.location.href); alert("Link copied"); } }} className="px-3 py-2 bg-pink-600 text-white rounded inline-flex items-center gap-2"><Share2 className="w-4 h-4" /> Share</button>
+                  <button onClick={() => handleDownload(result?.url, "merged-result")} className="flex-1 bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition flex items-center justify-center gap-2 font-semibold">
+                    <Download className="w-5 h-5" /> Download Image
+                  </button>
+                  <button onClick={() => { if (navigator.share) { navigator.share({ title: "My StitchPix Result", url: window.location.href }); } else { navigator.clipboard.writeText(window.location.href); alert("Link copied to clipboard"); } }} className="flex-1 bg-pink-600 text-white py-3 rounded-lg hover:bg-pink-700 transition flex items-center justify-center gap-2 font-semibold">
+                    <Share2 className="w-5 h-5" /> Share
+                  </button>
                 </div>
               </div>
-              <div className="flex justify-center mt-4">
-                <button onClick={handleReset} className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded">Try another dress</button>
-              </div>
             </div>
+          </div>
+
+          <div className="flex gap-4 justify-center mt-8">
+            <button onClick={handleReset} className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-8 py-3 rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition flex items-center gap-2"><RefreshCw className="w-5 h-5" /> Try Another Dress</button>
           </div>
         </div>
       </div>
