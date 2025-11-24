@@ -1,420 +1,451 @@
-import React, { useState } from 'react';
-import { Upload, ImageIcon, Sparkles, Download, Share2, RefreshCw, LogOut, ChevronDown, AlertCircle } from 'lucide-react';
+// src/App.js
+import React, { useEffect, useState, useRef } from "react";
+import {
+  Upload,
+  ImageIcon,
+  Sparkles,
+  Download,
+  Share2,
+  RefreshCw,
+  LogOut,
+  ChevronDown,
+  AlertCircle,
+  User,
+  Mail,
+  Lock,
+} from "lucide-react";
+
+/**
+ * Production-ready single-file App.js for StitchPix frontend (Option A)
+ *
+ * - Controlled inputs (no document.querySelector)
+ * - Token + user saved in localStorage
+ * - Robust error handling
+ * - Canvas merge fallback (works offline)
+ * - NanoBanana / DeepAI helper functions (kept as optional external integrations)
+ * - Small UX improvements (loading states, disabled buttons, form validation)
+ *
+ * Notes:
+ * - Update STITCHPIX_BACKEND if you deploy backend to another URL
+ * - This file assumes Tailwind CSS for styling (class names used extensively)
+ */
+
+const STITCHPIX_BACKEND = process.env.REACT_APP_STITCHPIX_BACKEND || "https://stitchpix-backend-1.onrender.com";
 
 export default function StitchPixAI() {
-  // User Management State
-  const [currentPage, setCurrentPage] = useState('login');
+  // --- Pages / UI state ---
+  const [currentPage, setCurrentPage] = useState("login"); // login | upload | results
   const [isSignUp, setIsSignUp] = useState(false);
-  const [user, setUser] = useState(null);
-  const [authError, setAuthError] = useState('');
-  
-  // App State
-  const [userPhoto, setUserPhoto] = useState(null);
-  const [dressPhoto, setDressPhoto] = useState(null);
-  const [generatedImages, setGeneratedImages] = useState([]);
-  const [apiKey, setApiKey] = useState('');
-  const [selectedModel, setSelectedModel] = useState('canvas');
-  const [showApiInput, setShowApiInput] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showApiInput, setShowApiInput] = useState(false);
 
-  // AI Models Configuration
+  // --- Auth state ---
+  const [user, setUser] = useState(null); // { id, name, email } or null
+  const [token, setToken] = useState(null);
+  const [authError, setAuthError] = useState("");
+  const [isLoadingAuth, setIsLoadingAuth] = useState(false);
+
+  // Controlled auth form
+  const [authName, setAuthName] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+
+  // --- App state ---
+  const [userPhoto, setUserPhoto] = useState(null); // dataURL
+  const [dressPhoto, setDressPhoto] = useState(null); // dataURL
+  const [generatedImages, setGeneratedImages] = useState([]); // [{id, url, quality, source}]
+  const [apiKey, setApiKey] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  // Model selection
   const aiModels = {
     free: [
-      { id: 'canvas', name: 'Canvas Merge (Free)', needsApi: false, description: 'Basic image merging using canvas' },
-      { id: 'nanobanana', name: 'Nano Banana API', needsApi: true, description: 'Advanced virtual try-on' },
-      { id: 'deepai', name: 'DeepAI Image Generator API', needsApi: true, description: 'AI-powered image generation' },
-      { id: 'huggingface', name: 'Hugging Face Inference API', needsApi: true, description: 'Open-source ML models' },
-      { id: 'replicate', name: 'Replicate API (Free Tier)', needsApi: true, description: 'Virtual try-on with credits' },
-      { id: 'stability', name: 'Stability AI (Free Credits)', needsApi: true, description: 'Image generation API' },
-      { id: 'clarifai', name: 'Clarifai Community AI APIs', needsApi: true, description: 'Community AI models' }
+      { id: "canvas", name: "Canvas Merge (Free)", needsApi: false, description: "Basic image merging using canvas" },
+      { id: "nanobanana", name: "Nano Banana API", needsApi: true, description: "Advanced virtual try-on" },
+      { id: "deepai", name: "DeepAI Image Editor", needsApi: true, description: "Image editing/generation" },
+      { id: "huggingface", name: "Hugging Face Inference API", needsApi: true, description: "Open-source ML models" },
     ],
     paid: [
-      { id: 'adobe', name: 'Adobe Photoshop API', needsApi: true, description: 'Professional image editing' },
-      { id: 'rekognition', name: 'Amazon Rekognition Custom Labels', needsApi: true, description: 'AWS custom ML models' },
-      { id: 'google-vision', name: 'Google Cloud Vision API', needsApi: true, description: 'Custom ML vision models' },
-      { id: 'azure', name: 'Microsoft Azure AI Vision', needsApi: true, description: 'Azure cognitive services' }
-    ]
+      { id: "replicate", name: "Replicate API", needsApi: true, description: "Run community models" },
+      { id: "stability", name: "Stability AI", needsApi: true, description: "Image generation API" },
+    ],
   };
 
   const allModels = [...aiModels.free, ...aiModels.paid];
-  const currentModelData = allModels.find(m => m.id === selectedModel);
+  const [selectedModel, setSelectedModel] = useState("canvas");
+  const currentModelData = allModels.find((m) => m.id === selectedModel);
 
-  const isValidEmail = (email) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
+  // Refs to avoid stale closures for long operations
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  const isValidPassword = (password) => {
-    return password.length >= 6;
-  };
+  // --- Utilities / validation ---
+  const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const isValidPassword = (pwd) => typeof pwd === "string" && pwd.length >= 6;
 
-  const handleSignUp = async () => {
-  const name = document.querySelector('input[name="name"]')?.value.trim();
-  const email = document.querySelector('input[name="email"]')?.value.trim();
-  const password = document.querySelector('input[name="password"]')?.value;
-
-  setAuthError("");
-
-  if (!name || name.length < 2) return setAuthError("Name must be at least 2 characters long");
-  if (!isValidEmail(email)) return setAuthError("Invalid email format");
-  if (!isValidPassword(password)) return setAuthError("Password must be at least 6 characters");
-
-  try {
-    const response = await fetch("https://stitchpix-backend-1.onrender.com/api/auth/signup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password })
-    });
-
-    const data = await response.json();
-    if (!response.ok) return setAuthError(data.message);
-
-    // Save JWT token
-    localStorage.setItem("token", data.token);
-
-    setUser({ name, email });
-    setCurrentPage("upload");
-  } catch (error) {
-    setAuthError("Signup failed. Try again.");
-  }
-};
-
-
-const handleLogin = async () => {
-  const emailInput = document.querySelector('input[name="email"]');
-  const passwordInput = document.querySelector('input[name="password"]');
-    
-  const email = emailInput?.value.trim();
-  const password = passwordInput?.value;
-
-  setAuthError('');
-
-  if (!email || !password) {
-    setAuthError('Please enter both email and password');
-    return;
-  }
-
-  try {
-    const res = await fetch("https://stitchpixai-4.onrender.com/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password })
-    });
-
-    const data = await res.json();
-
-    // backend error
-    if (!res.ok) {
-      setAuthError(data.message);
-      return;
+  // Try to hydrate user/token from localStorage on mount
+  useEffect(() => {
+    const savedToken = localStorage.getItem("stitchpix_token");
+    const savedUser = localStorage.getItem("stitchpix_user");
+    const savedApiKey = localStorage.getItem("stitchpix_api_key");
+    if (savedApiKey) setApiKey(savedApiKey);
+    if (savedToken) setToken(savedToken);
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        setUser(parsed);
+        setCurrentPage("upload");
+      } catch {
+        localStorage.removeItem("stitchpix_user");
+      }
     }
+  }, []);
 
-    // store JWT token
-    localStorage.setItem("token", data.token);
+  // persist apiKey
+  useEffect(() => {
+    if (apiKey) localStorage.setItem("stitchpix_api_key", apiKey);
+    else localStorage.removeItem("stitchpix_api_key");
+  }, [apiKey]);
 
-    // login success
-    setUser(data.user);
-    setCurrentPage("upload");
+  // --- Auth flows (signup/login) ---
+  const handleSignUp = async () => {
+    setAuthError("");
+    if (!authName || authName.trim().length < 2) return setAuthError("Name must be at least 2 characters long");
+    if (!isValidEmail(authEmail)) return setAuthError("Invalid email");
+    if (!isValidPassword(authPassword)) return setAuthError("Password must be at least 6 characters");
 
-  } catch (err) {
-    setAuthError("Login failed. Check your internet or server.");
-  }
-};
+    setIsLoadingAuth(true);
+    try {
+      const controller = new AbortController();
+      const res = await fetch(`${STITCHPIX_BACKEND}/api/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: authName.trim(), email: authEmail.trim(), password: authPassword }),
+        signal: controller.signal,
+      });
 
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAuthError(data?.message || `Signup failed (status ${res.status})`);
+        return;
+      }
+
+      // backend may return token & user
+      if (data.token) {
+        localStorage.setItem("stitchpix_token", data.token);
+        setToken(data.token);
+      }
+      const savedUser = data.user || { name: authName.trim(), email: authEmail.trim() };
+      localStorage.setItem("stitchpix_user", JSON.stringify(savedUser));
+      setUser(savedUser);
+      setCurrentPage("upload");
+
+      // clear form
+      setAuthName("");
+      setAuthEmail("");
+      setAuthPassword("");
+    } catch (err) {
+      console.error("signup error:", err);
+      setAuthError("Signup failed. Check network or try again.");
+    } finally {
+      if (mountedRef.current) setIsLoadingAuth(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    setAuthError("");
+    if (!isValidEmail(authEmail)) return setAuthError("Enter a valid email");
+    if (!authPassword) return setAuthError("Please enter your password");
+
+    setIsLoadingAuth(true);
+    try {
+      const res = await fetch(`${STITCHPIX_BACKEND}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail.trim(), password: authPassword }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAuthError(data?.message || `Login failed (status ${res.status})`);
+        return;
+      }
+
+      if (data.token) {
+        localStorage.setItem("stitchpix_token", data.token);
+        setToken(data.token);
+      }
+
+      const savedUser = data.user || { email: authEmail.trim() };
+      localStorage.setItem("stitchpix_user", JSON.stringify(savedUser));
+      setUser(savedUser);
+      setCurrentPage("upload");
+
+      // clear form
+      setAuthEmail("");
+      setAuthPassword("");
+    } catch (err) {
+      console.error("login error:", err);
+      setAuthError("Login failed. Check network or server.");
+    } finally {
+      if (mountedRef.current) setIsLoadingAuth(false);
+    }
+  };
 
   const handleAuth = () => {
-    if (isSignUp) {
-      handleSignUp();
-    } else {
-      handleLogin();
-    }
+    if (isSignUp) return handleSignUp();
+    return handleLogin();
+  };
+
+  // --- Image upload helpers (convert to dataURL) ---
+  const validateImageFile = (file) => {
+    if (!file.type.startsWith("image/")) return "Please upload an image file (jpg, png, etc.)";
+    if (file.size > 6 * 1024 * 1024) return "Image too large. Max 6MB.";
+    return null;
   };
 
   const handleImageUpload = (e, type) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (type === 'user') {
-          setUserPhoto(reader.result);
-        } else {
-          setDressPhoto(reader.result);
-        }
-      };
-      reader.readAsDataURL(file);
+    setErrorMessage("");
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const err = validateImageFile(file);
+    if (err) {
+      setErrorMessage(err);
+      return;
     }
+
+    setIsUploadingImage(true);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (!mountedRef.current) return;
+      const dataUrl = reader.result;
+      if (type === "user") setUserPhoto(dataUrl);
+      else setDressPhoto(dataUrl);
+      setIsUploadingImage(false);
+    };
+    reader.onerror = () => {
+      setIsUploadingImage(false);
+      setErrorMessage("Failed to read image file.");
+    };
+    reader.readAsDataURL(file);
   };
 
-// FIXED: Nano Banana API with correct implementation
-const callNanoBanana = async (userPhotoData, dressPhotoData) => {
-  try {
-    // Convert base64 to blob for file upload
+  // --- External API helpers (optional) ---
+  // These assume the API accepts multipart/form-data and returns { output_url | image_url }
+  const callNanoBanana = async (userPhotoData, dressPhotoData) => {
+    if (!apiKey) throw new Error("NanoBanana requires API key");
     const base64ToBlob = (base64) => {
-      const byteString = atob(base64.split(',')[1]);
-      const mimeString = base64.split(',')[0].split(':')[1].split(';')[0];
+      const byteString = atob(base64.split(",")[1]);
+      const mimeString = base64.split(",")[0].split(":")[1].split(";")[0];
       const ab = new ArrayBuffer(byteString.length);
       const ia = new Uint8Array(ab);
-      for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-      }
+      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
       return new Blob([ab], { type: mimeString });
     };
 
     const formData = new FormData();
-    formData.append('person_image', base64ToBlob(userPhotoData), 'user.jpg');
-    formData.append('garment_image', base64ToBlob(dressPhotoData), 'dress.jpg');
-    
-    // Use correct Nano Banana API endpoint
-    const response = await fetch('https://api.nanobanana.ai/api/try-on', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: formData
+    formData.append("person_image", base64ToBlob(userPhotoData), "user.jpg");
+    formData.append("garment_image", base64ToBlob(dressPhotoData), "dress.jpg");
+
+    const res = await fetch("https://api.nanobanana.ai/api/try-on", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: formData,
     });
 
-    if (!response.ok) {
-      throw new Error(`Nano Banana API failed with status: ${response.status}`);
-    }
-
-    const result = await response.json();
-    
+    if (!res.ok) throw new Error(`NanoBanana API failed (${res.status})`);
+    const result = await res.json();
     if (result.output_url || result.image_url) {
-      return [{
-        id: 1,
-        url: result.output_url || result.image_url,
-        quality: 'AI Enhanced (Nano Banana)',
-        source: 'nanobanana'
-      }];
-    } else {
-      // If no URL returned, fallback to canvas
-      throw new Error('No output URL received from API');
+      return [{ id: 1, url: result.output_url || result.image_url, quality: "AI Enhanced (NanoBanana)", source: "nanobanana" }];
     }
-  } catch (error) {
-    throw new Error(`Nano Banana API Error: ${error.message}`);
-  }
-};
+    throw new Error("NanoBanana returned no image URL");
+  };
 
-// FIXED: DeepAI API with correct implementation
-const callDeepAI = async (userPhotoData, dressPhotoData) => {
-  try {
-    // DeepAI might not be the best for virtual try-on
-    // Let's use a more appropriate endpoint or fallback
-    const response = await fetch('https://api.deepai.org/api/image-editor', {
-      method: 'POST',
-      headers: {
-        'api-key': apiKey
-      },
-      body: JSON.stringify({
-        image: userPhotoData,
-        text: "merge with dress image and create virtual try-on"
-      })
+  const callDeepAI = async (userPhotoData, dressPhotoData) => {
+    if (!apiKey) throw new Error("DeepAI requires API key");
+    const res = await fetch("https://api.deepai.org/api/image-editor", {
+      method: "POST",
+      headers: { "api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ image: userPhotoData, text: "merge with dress image and create virtual try-on" }),
+    });
+    if (!res.ok) throw new Error(`DeepAI failed (${res.status})`);
+    const data = await res.json();
+    if (data.output_url) return [{ id: 1, url: data.output_url, quality: "AI Enhanced (DeepAI)", source: "deepai" }];
+    throw new Error("DeepAI returned no image");
+  };
+
+  // --- Canvas merge fallback (works entirely in browser) ---
+  const createMergedImages = (userPhotoData, dressPhotoData) =>
+    new Promise((resolve) => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      const userImg = new Image();
+      const dressImg = new Image();
+      userImg.crossOrigin = "anonymous";
+      dressImg.crossOrigin = "anonymous";
+
+      userImg.onload = () => {
+        dressImg.onload = () => {
+          // set size to dress image (target)
+          canvas.width = dressImg.width;
+          canvas.height = dressImg.height;
+
+          // draw dress first
+          ctx.drawImage(dressImg, 0, 0, canvas.width, canvas.height);
+
+          // simple face placement heuristic (center top portion)
+          const faceWidth = Math.round(canvas.width * 0.25);
+          const faceHeight = Math.round(faceWidth * 1.2);
+          const faceX = Math.round((canvas.width - faceWidth) / 2);
+          const faceY = Math.round(canvas.height * 0.08);
+
+          // crop face box from user image
+          const uX = Math.round(userImg.width * 0.25);
+          const uY = Math.round(userImg.height * 0.1);
+          const uW = Math.round(userImg.width * 0.5);
+          const uH = Math.round(userImg.height * 0.4);
+
+          ctx.save();
+          // rounded rect clipping (fallback path if not available)
+          if (typeof ctx.roundRect === "function") {
+            ctx.beginPath();
+            ctx.roundRect(faceX, faceY, faceWidth, faceHeight, 36);
+            ctx.clip();
+          } else {
+            // fallback rounded-rect path
+            const r = 36;
+            ctx.beginPath();
+            ctx.moveTo(faceX + r, faceY);
+            ctx.arcTo(faceX + faceWidth, faceY, faceX + faceWidth, faceY + faceHeight, r);
+            ctx.arcTo(faceX + faceWidth, faceY + faceHeight, faceX, faceY + faceHeight, r);
+            ctx.arcTo(faceX, faceY + faceHeight, faceX, faceY, r);
+            ctx.arcTo(faceX, faceY, faceX + faceWidth, faceY, r);
+            ctx.closePath();
+            ctx.clip();
+          }
+
+          try {
+            ctx.drawImage(userImg, uX, uY, uW, uH, faceX, faceY, faceWidth, faceHeight);
+          } catch {
+            // if something goes wrong, draw whole user image scaled
+            ctx.drawImage(userImg, faceX, faceY, faceWidth, faceHeight);
+          }
+          ctx.restore();
+
+          const mergedUrl = canvas.toDataURL("image/png", 1.0);
+          resolve([{ id: 1, url: mergedUrl, quality: "Canvas Merged", source: "canvas" }]);
+        };
+
+        dressImg.onerror = () => {
+          resolve([{ id: 1, url: userPhotoData, quality: "Original", source: "original" }]);
+        };
+
+        dressImg.src = dressPhotoData;
+      };
+
+      userImg.onerror = () => {
+        resolve([{ id: 1, url: dressPhotoData, quality: "Original", source: "original" }]);
+      };
+
+      userImg.src = userPhotoData;
     });
 
-    if (!response.ok) {
-      throw new Error('DeepAI API request failed');
+  // --- Generate handler (model selection + fallback) ---
+  const handleGenerate = async () => {
+    setErrorMessage("");
+    if (!userPhoto || !dressPhoto) {
+      setErrorMessage("Upload both your photo and the dress model.");
+      return;
+    }
+    if (currentModelData?.needsApi && !apiKey) {
+      setErrorMessage(`API key required for ${currentModelData.name}`);
+      return;
     }
 
-    const data = await response.json();
-    
-    if (data.output_url) {
-      return [{
-        id: 1,
-        url: data.output_url,
-        quality: 'AI Enhanced (DeepAI)',
-        source: 'deepai'
-      }];
-    } else {
-      throw new Error('No output from DeepAI');
-    }
-  } catch (error) {
-    throw new Error(`DeepAI Error: ${error.message}`);
-  }
-};
-
-// IMPROVED: Canvas Merge - Fixed overlapping issue
-const createMergedImages = (userPhotoData, dressPhotoData) => {
-  return new Promise((resolve) => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    
-    const userImg = new Image();
-    const dressImg = new Image();
-    
-    userImg.onload = () => {
-      dressImg.onload = () => {
-        // Set canvas to dress image size
-        canvas.width = dressImg.width;
-        canvas.height = dressImg.height;
-        
-        // First draw the complete dress image
-        ctx.drawImage(dressImg, 0, 0, canvas.width, canvas.height);
-        
-        // Calculate face area on the dress model - FIXED OVERLAPPING
-        const faceWidth = canvas.width * 0.25;  // Reduced size to prevent overlap
-        const faceHeight = faceWidth * 1.2;     // Better aspect ratio
-        const faceX = (canvas.width - faceWidth) / 2;
-        const faceY = canvas.height * 0.08;     // Better vertical positioning
-        
-        // Extract just the face from user photo - FIXED: Don't take entire image
-        const userFaceArea = {
-          x: userImg.width * 0.25,
-          y: userImg.height * 0.1,
-          width: userImg.width * 0.5,
-          height: userImg.height * 0.4
-        };
-        
-        // Create clipping path for smooth blending - FIXED OVERLAPPING
-        ctx.save();
-        ctx.beginPath();
-        // Use rounded rectangle instead of ellipse for better control
-        ctx.roundRect(faceX, faceY, faceWidth, faceHeight, 50);
-        ctx.clip();
-        
-        // Draw only the face portion - FIXED: No overlapping
-        ctx.drawImage(
-          userImg,
-          userFaceArea.x,
-          userFaceArea.y,
-          userFaceArea.width,
-          userFaceArea.height,
-          faceX,
-          faceY,
-          faceWidth,
-          faceHeight
-        );
-        
-        ctx.restore();
-        
-        // Add subtle blending at edges
-        ctx.globalCompositeOperation = 'source-over';
-        
-        const mergedUrl = canvas.toDataURL('image/png', 1.0);
-        
-        resolve([{
-          id: 1,
-          url: mergedUrl,
-          quality: 'Canvas Merged',
-          source: 'canvas'
-        }]);
-      };
-
-      dressImg.onerror = () => {
-        // Fallback if dress image fails
-        resolve([{
-          id: 1,
-          url: userPhotoData,
-          quality: 'Original',
-          source: 'original'
-        }]);
-      };
-
-      dressImg.src = dressPhotoData;
-    };
-    
-    userImg.onerror = () => {
-      // Fallback if user image fails
-      resolve([{
-        id: 1,
-        url: dressPhotoData,
-        quality: 'Original',
-        source: 'original'
-      }]);
-    };
-    
-    userImg.src = userPhotoData;
-  });
-};
-
-// UPDATED: HandleGenerate function with better error handling
-const handleGenerate = async () => {
-  if (!userPhoto || !dressPhoto) {
-    setErrorMessage('Please upload both your photo and a dress image!');
-    return;
-  }
-
-  if (currentModelData?.needsApi && !apiKey) {
-    setErrorMessage(`Please enter your API key for ${currentModelData.name}`);
-    return;
-  }
-
-  setIsGenerating(true);
-  setErrorMessage('');
-  
-  try {
-    let result;
-
-    if (selectedModel === 'nanobanana') {
-      result = await callNanoBanana(userPhoto, dressPhoto);
-    } else if (selectedModel === 'deepai') {
-      result = await callDeepAI(userPhoto, dressPhoto);
-    } else if (selectedModel === 'canvas') {
-      result = await createMergedImages(userPhoto, dressPhoto);
-    } else {
-      // For other models, use canvas merge as fallback
-      result = await createMergedImages(userPhoto, dressPhoto);
-    }
-
-    setGeneratedImages(result);
-    setCurrentPage('results');
-  } catch (error) {
-    console.error('Generation error:', error);
-    setErrorMessage(`${error.message} - Falling back to canvas merge...`);
-    
-    // Fallback to canvas merge
+    setIsGenerating(true);
     try {
-      const fallbackResult = await createMergedImages(userPhoto, dressPhoto);
-      setGeneratedImages(fallbackResult);
-      setCurrentPage('results');
-    } catch (fallbackError) {
-      setErrorMessage(`Error: ${fallbackError.message}`);
-    }
-  } finally {
-    setIsGenerating(false);
-  }
-};
+      let result;
+      if (selectedModel === "nanobanana") result = await callNanoBanana(userPhoto, dressPhoto);
+      else if (selectedModel === "deepai") result = await callDeepAI(userPhoto, dressPhoto);
+      else result = await createMergedImages(userPhoto, dressPhoto);
 
-  const handleDownload = (imageUrl, imageName) => {
-    const link = document.createElement('a');
-    link.href = imageUrl;
-    link.download = `stitchpix-ai-${imageName}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      if (!Array.isArray(result) || result.length === 0) throw new Error("No images returned from model");
+      setGeneratedImages(result);
+      setCurrentPage("results");
+    } catch (err) {
+      console.error("generate error:", err);
+      setErrorMessage(`${err.message} — falling back to canvas merge...`);
+      try {
+        const fallback = await createMergedImages(userPhoto, dressPhoto);
+        setGeneratedImages(fallback);
+        setCurrentPage("results");
+      } catch (fbErr) {
+        console.error("fallback error:", fbErr);
+        setErrorMessage(`Generation failed: ${fbErr.message}`);
+      }
+    } finally {
+      if (mountedRef.current) setIsGenerating(false);
+    }
+  };
+
+  // --- Download / share / reset / logout ---
+  const handleDownload = (imageUrl, imageName = "result") => {
+    try {
+      const link = document.createElement("a");
+      link.href = imageUrl;
+      link.download = `stitchpix-${imageName}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("download error:", err);
+      setErrorMessage("Download failed.");
+    }
   };
 
   const handleReset = () => {
     setUserPhoto(null);
     setDressPhoto(null);
     setGeneratedImages([]);
-    setErrorMessage('');
-    setCurrentPage('upload');
+    setErrorMessage("");
+    setCurrentPage("upload");
   };
 
-  const handleLogout = () => {
-    setShowLogoutConfirm(true);
-  };
-
+  const handleLogout = () => setShowLogoutConfirm(true);
   const confirmLogout = () => {
     setUser(null);
+    setToken(null);
+    localStorage.removeItem("stitchpix_token");
+    localStorage.removeItem("stitchpix_user");
+    // keep API key stored optionally
     setUserPhoto(null);
     setDressPhoto(null);
     setGeneratedImages([]);
-    setApiKey('');
-    setCurrentPage('login');
-    setAuthError('');
     setShowLogoutConfirm(false);
+    setCurrentPage("login");
   };
+  const cancelLogout = () => setShowLogoutConfirm(false);
 
-  const cancelLogout = () => {
-    setShowLogoutConfirm(false);
-  };
+  // --- Small helper UI components (inline for a single-file) ---
+  const AuthErrorBox = ({ message }) =>
+    message ? (
+      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+        <AlertCircle className="w-4 h-4" />
+        <div>{message}</div>
+      </div>
+    ) : null;
 
-  // Page 1: Login/SignUp
-  if (currentPage === 'login') {
+  // --- JSX pages ---
+  // LOGIN / SIGNUP
+  if (currentPage === "login") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
@@ -426,52 +457,62 @@ const handleGenerate = async () => {
             <p className="text-gray-600 mt-2">Virtual Try-On Experience</p>
           </div>
 
-          {authError && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-              {authError}
-            </div>
-          )}
+          <AuthErrorBox message={authError} />
 
           <div className="space-y-4">
             {isSignUp && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
-                <input
-                  type="text"
-                  name="name"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  placeholder="John Doe"
-                />
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <input
+                    type="text"
+                    value={authName}
+                    onChange={(e) => setAuthName(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="John Doe"
+                    name="name"
+                  />
+                </div>
               </div>
             )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Email *</label>
-              <input
-                type="email"
-                name="email"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="you@example.com"
-              />
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="you@example.com"
+                  name="email"
+                />
+              </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Password * {isSignUp && <span className="text-xs text-gray-500">(min 6 characters)</span>}
-              </label>
-              <input
-                type="password"
-                name="password"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="••••••••"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Password *</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="••••••••"
+                  name="password"
+                />
+              </div>
             </div>
 
             <button
               onClick={handleAuth}
-              className="w-full bg-gradient-to-r from-purple-600 to-pink-500 text-white py-3 rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition"
+              disabled={isLoadingAuth}
+              className="w-full bg-gradient-to-r from-purple-600 to-pink-500 text-white py-3 rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition disabled:opacity-50"
             >
-              {isSignUp ? 'Sign Up' : 'Login'}
+              {isLoadingAuth ? "Processing..." : isSignUp ? "Create Account" : "Login to Account"}
             </button>
           </div>
 
@@ -479,11 +520,14 @@ const handleGenerate = async () => {
             <button
               onClick={() => {
                 setIsSignUp(!isSignUp);
-                setAuthError('');
+                setAuthError("");
+                setAuthName("");
+                setAuthEmail("");
+                setAuthPassword("");
               }}
               className="text-purple-600 hover:text-purple-800 font-medium"
             >
-              {isSignUp ? 'Already have an account? Login' : "Don't have an account? Sign Up"}
+              {isSignUp ? "Already have an account? Login" : "Don't have an account? Sign Up"}
             </button>
           </div>
 
@@ -495,8 +539,8 @@ const handleGenerate = async () => {
     );
   }
 
-  // Page 2: Upload Page
-  if (currentPage === 'upload') {
+  // UPLOAD PAGE
+  if (currentPage === "upload") {
     return (
       <div className="min-h-screen bg-gray-50">
         {showLogoutConfirm && (
@@ -505,18 +549,8 @@ const handleGenerate = async () => {
               <h3 className="text-xl font-bold text-gray-800 mb-3">Confirm Logout</h3>
               <p className="text-gray-600 mb-6">Are you sure you want to logout?</p>
               <div className="flex gap-3">
-                <button
-                  onClick={cancelLogout}
-                  className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={confirmLogout}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-medium"
-                >
-                  Logout
-                </button>
+                <button onClick={cancelLogout} className="flex-1 px-4 py-2 bg-gray-200 rounded-lg">Cancel</button>
+                <button onClick={confirmLogout} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg">Logout</button>
               </div>
             </div>
           </div>
@@ -529,15 +563,9 @@ const handleGenerate = async () => {
               <h1 className="text-2xl font-bold text-gray-800">StitchPix AI</h1>
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600">
-                Welcome, <span className="font-semibold">{user?.name || user?.email}</span>
-              </span>
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 text-gray-600 hover:text-gray-800"
-              >
-                <LogOut className="w-5 h-5" />
-                Logout
+              <span className="text-sm text-gray-600">Welcome, <span className="font-semibold">{user?.name || user?.email}</span></span>
+              <button onClick={handleLogout} className="flex items-center gap-2 text-gray-600 hover:text-gray-800">
+                <LogOut className="w-5 h-5" /> Logout
               </button>
             </div>
           </div>
@@ -547,62 +575,33 @@ const handleGenerate = async () => {
           <div className="text-center mb-12">
             <h2 className="text-4xl font-bold text-gray-800 mb-4">Virtual Try-On Studio</h2>
             <p className="text-gray-600 text-lg">Upload your photo and a dress model to see yourself wearing it!</p>
-            
-            {/* AI Model Dropdown */}
+
+            {/* Model selector */}
             <div className="mt-8 max-w-md mx-auto">
               <label className="block text-sm font-medium text-gray-700 mb-3">Select AI Model</label>
               <div className="relative">
-                <button
-                  onClick={() => setShowModelDropdown(!showModelDropdown)}
-                  className="w-full px-4 py-3 bg-white border-2 border-purple-300 rounded-lg flex items-center justify-between hover:border-purple-500 transition"
-                >
+                <button onClick={() => setShowModelDropdown(!showModelDropdown)} className="w-full px-4 py-3 bg-white border-2 border-purple-300 rounded-lg flex items-center justify-between">
                   <div className="text-left">
                     <p className="font-semibold text-gray-800">{currentModelData?.name}</p>
                     <p className="text-xs text-gray-500">{currentModelData?.description}</p>
                   </div>
-                  <ChevronDown className={`w-5 h-5 text-gray-600 transition ${showModelDropdown ? 'rotate-180' : ''}`} />
+                  <ChevronDown className={`w-5 h-5 text-gray-600 ${showModelDropdown ? "rotate-180" : ""}`} />
                 </button>
 
                 {showModelDropdown && (
                   <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-purple-300 rounded-lg shadow-lg z-10 max-h-96 overflow-y-auto">
-                    <div className="p-3 bg-green-50 border-b sticky top-0">
-                      <p className="text-xs font-bold text-green-700 uppercase">Free Models</p>
-                    </div>
-                    {aiModels.free.map(model => (
-                      <button
-                        key={model.id}
-                        onClick={() => {
-                          setSelectedModel(model.id);
-                          setShowModelDropdown(false);
-                          if (!model.needsApi) {
-                            setShowApiInput(false);
-                            setApiKey('');
-                          }
-                        }}
-                        className={`w-full text-left px-4 py-3 border-b hover:bg-purple-50 transition ${
-                          selectedModel === model.id ? 'bg-purple-100 border-l-4 border-l-purple-600' : ''
-                        }`}
-                      >
+                    <div className="p-3 bg-green-50 border-b sticky top-0"><p className="text-xs font-bold text-green-700 uppercase">Free Models</p></div>
+                    {aiModels.free.map((model) => (
+                      <button key={model.id} onClick={() => { setSelectedModel(model.id); setShowModelDropdown(false); if (!model.needsApi) { setShowApiInput(false); } }} className={`w-full text-left px-4 py-3 border-b hover:bg-purple-50 ${selectedModel === model.id ? "bg-purple-100 border-l-4 border-l-purple-600" : ""}`}>
                         <p className="font-medium text-gray-800">{model.name}</p>
                         <p className="text-xs text-gray-600 mt-1">{model.description}</p>
                         {model.needsApi && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded inline-block mt-2">API Key Required</span>}
                       </button>
                     ))}
 
-                    <div className="p-3 bg-blue-50 border-b sticky top-0">
-                      <p className="text-xs font-bold text-blue-700 uppercase">Paid Models</p>
-                    </div>
-                    {aiModels.paid.map(model => (
-                      <button
-                        key={model.id}
-                        onClick={() => {
-                          setSelectedModel(model.id);
-                          setShowModelDropdown(false);
-                        }}
-                        className={`w-full text-left px-4 py-3 border-b hover:bg-purple-50 transition ${
-                          selectedModel === model.id ? 'bg-purple-100 border-l-4 border-l-purple-600' : ''
-                        }`}
-                      >
+                    <div className="p-3 bg-blue-50 border-b sticky top-0"><p className="text-xs font-bold text-blue-700 uppercase">Paid Models</p></div>
+                    {aiModels.paid.map((model) => (
+                      <button key={model.id} onClick={() => { setSelectedModel(model.id); setShowModelDropdown(false); }} className={`w-full text-left px-4 py-3 border-b hover:bg-purple-50 ${selectedModel === model.id ? "bg-purple-100 border-l-4 border-l-purple-600" : ""}`}>
                         <p className="font-medium text-gray-800">{model.name}</p>
                         <p className="text-xs text-gray-600 mt-1">{model.description}</p>
                         <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded inline-block mt-2">API Key Required</span>
@@ -613,66 +612,40 @@ const handleGenerate = async () => {
               </div>
             </div>
 
-            {/* API Key Input */}
+            {/* API Key input */}
             {currentModelData?.needsApi && (
               <div className="mt-6 max-w-md mx-auto">
-                <button
-                  onClick={() => setShowApiInput(!showApiInput)}
-                  className="text-purple-600 hover:text-purple-800 font-medium mb-2"
-                >
-                  {showApiInput ? '▼' : '▶'} {apiKey ? 'Update' : 'Enter'} API Key
+                <button onClick={() => setShowApiInput(!showApiInput)} className="text-purple-600 hover:text-purple-800 mb-2">
+                  {showApiInput ? "▼" : "▶"} {apiKey ? "Update" : "Enter"} API Key
                 </button>
-                
+
                 {showApiInput && (
                   <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2 text-left">
-                      API Key for {currentModelData?.name}
-                    </label>
-                    <input
-                      type="password"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="Enter your API key"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    />
-                    <p className="text-xs text-gray-500 mt-2 text-left">
-                      Your API key is stored locally and never shared
-                    </p>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">API Key for {currentModelData?.name}</label>
+                    <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Enter your API key" className="w-full px-4 py-2 border rounded-lg" />
+                    <p className="text-xs text-gray-500 mt-2">Your API key is stored locally only</p>
                   </div>
                 )}
-                
-                {apiKey && !showApiInput && (
-                  <div className="text-sm text-green-600 font-medium">
-                    ✓ API Key configured
-                  </div>
-                )}
+
+                {apiKey && !showApiInput && <div className="text-sm text-green-600 font-medium">✓ API Key configured</div>}
               </div>
             )}
           </div>
 
-          {/* Error Message */}
+          {/* Error message */}
           {errorMessage && (
             <div className="mb-6 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-lg flex items-start gap-3 max-w-2xl mx-auto">
               <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="text-yellow-800 text-sm">{errorMessage}</p>
-              </div>
+              <div><p className="text-yellow-800 text-sm">{errorMessage}</p></div>
             </div>
           )}
 
+          {/* Upload panels */}
           <div className="grid md:grid-cols-2 gap-8 mb-8">
             <div className="bg-white rounded-xl shadow-lg p-6">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                <ImageIcon className="w-5 h-5 text-purple-600" />
-                Your Face Photo
-              </h3>
+              <h3 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2"><ImageIcon className="w-5 h-5 text-purple-600" />Your Face Photo</h3>
               <label className="cursor-pointer">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleImageUpload(e, 'user')}
-                  className="hidden"
-                />
+                <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e, "user")} className="hidden" />
                 <div className="border-4 border-dashed border-purple-300 rounded-xl h-80 flex items-center justify-center hover:border-purple-500 transition bg-purple-50">
                   {userPhoto ? (
                     <img src={userPhoto} alt="User" className="max-h-full max-w-full object-contain rounded-lg" />
@@ -688,17 +661,9 @@ const handleGenerate = async () => {
             </div>
 
             <div className="bg-white rounded-xl shadow-lg p-6">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                <ImageIcon className="w-5 h-5 text-pink-600" />
-                Model with Dress
-              </h3>
+              <h3 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2"><ImageIcon className="w-5 h-5 text-pink-600" />Model with Dress</h3>
               <label className="cursor-pointer">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleImageUpload(e, 'dress')}
-                  className="hidden"
-                />
+                <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e, "dress")} className="hidden" />
                 <div className="border-4 border-dashed border-pink-300 rounded-xl h-80 flex items-center justify-center hover:border-pink-500 transition bg-pink-50">
                   {dressPhoto ? (
                     <img src={dressPhoto} alt="Dress" className="max-h-full max-w-full object-contain rounded-lg" />
@@ -715,35 +680,19 @@ const handleGenerate = async () => {
           </div>
 
           <div className="text-center">
-            <button
-              onClick={handleGenerate}
-              disabled={isGenerating || !userPhoto || !dressPhoto}
-              className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-12 py-4 rounded-xl font-semibold text-lg hover:shadow-xl transform hover:scale-105 transition disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center gap-3 mx-auto"
-            >
-              {isGenerating ? (
-                <>
-                  <RefreshCw className="w-6 h-6 animate-spin" />
-                  Processing with {currentModelData?.name}...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-6 h-6" />
-                  Generate with {currentModelData?.name}
-                </>
-              )}
+            <button onClick={handleGenerate} disabled={isGenerating || !userPhoto || !dressPhoto || (currentModelData?.needsApi && !apiKey)} className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-12 py-4 rounded-xl font-semibold text-lg hover:shadow-xl transform hover:scale-105 transition disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center gap-3 mx-auto">
+              {isGenerating ? (<><RefreshCw className="w-6 h-6 animate-spin" /> Processing...</>) : (<><Sparkles className="w-6 h-6" /> Generate with {currentModelData?.name}</>)}
             </button>
-            
-            <p className="text-sm text-gray-500 mt-3">
-              {currentModelData?.needsApi && apiKey ? '✓ API Connected - Ready' : currentModelData?.needsApi ? '⚠️ API Key Required' : '✓ Ready to Generate'}
-            </p>
+            <p className="text-sm text-gray-500 mt-3">{currentModelData?.needsApi && apiKey ? "✓ API Connected - Ready" : currentModelData?.needsApi ? "⚠️ API Key Required" : "✓ Ready to Generate"}</p>
           </div>
         </div>
       </div>
     );
   }
 
-  // Page 3: Results Gallery
-  if (currentPage === 'results') {
+  // RESULTS PAGE
+  if (currentPage === "results") {
+    const result = generatedImages?.[0];
     return (
       <div className="min-h-screen bg-gray-50">
         {showLogoutConfirm && (
@@ -752,18 +701,8 @@ const handleGenerate = async () => {
               <h3 className="text-xl font-bold text-gray-800 mb-3">Confirm Logout</h3>
               <p className="text-gray-600 mb-6">Are you sure you want to logout?</p>
               <div className="flex gap-3">
-                <button
-                  onClick={cancelLogout}
-                  className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={confirmLogout}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-medium"
-                >
-                  Logout
-                </button>
+                <button onClick={cancelLogout} className="flex-1 px-4 py-2 bg-gray-200 rounded-lg">Cancel</button>
+                <button onClick={confirmLogout} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg">Logout</button>
               </div>
             </div>
           </div>
@@ -771,46 +710,30 @@ const handleGenerate = async () => {
 
         <div className="bg-white shadow-sm">
           <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-6 h-6 text-purple-600" />
-              <h1 className="text-2xl font-bold text-gray-800">StitchPix AI</h1>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-800"
-            >
-              <LogOut className="w-5 h-5" />
-              Logout
-            </button>
+            <div className="flex items-center gap-2"><Sparkles className="w-6 h-6 text-purple-600" /><h1 className="text-2xl font-bold text-gray-800">StitchPix AI</h1></div>
+            <button onClick={handleLogout} className="flex items-center gap-2 text-gray-600 hover:text-gray-800"><LogOut className="w-5 h-5" /> Logout</button>
           </div>
         </div>
 
         <div className="max-w-6xl mx-auto px-4 py-12">
           <div className="text-center mb-12">
-            <h2 className="text-4xl font-bold text-gray-800 mb-4">✨ Your Perfect Result!</h2>
-            <p className="text-gray-600 text-lg">Generated with {generatedImages[0]?.source === 'canvas' ? 'Canvas Merge' : generatedImages[0]?.source === 'nanobanana' ? 'Nano Banana AI' : generatedImages[0]?.source === 'deepai' ? 'DeepAI' : 'AI Model'}</p>
+            <h2 className="text-4xl font-bold text-gray-800 mb-4">✨ Your Result</h2>
+            <p className="text-gray-600 text-lg">Generated with {result?.source === "canvas" ? "Canvas Merge" : result?.source === "nanobanana" ? "NanoBanana" : result?.source === "deepai" ? "DeepAI" : "AI Model"}</p>
           </div>
 
           <div className="max-w-2xl mx-auto">
             <div className="bg-white rounded-xl shadow-2xl overflow-hidden">
-              <img src={generatedImages[0]?.url} alt="Merged Result" className="w-full h-auto object-contain" />
+              <img src={result?.url} alt="Merged Result" className="w-full h-auto object-contain" onError={(e) => { e.target.src = "https://via.placeholder.com/500x500?text=Image+not+available"; }} />
               <div className="p-6">
                 <div className="flex justify-between items-center mb-4">
-                  <span className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-4 py-2 rounded-full text-sm font-semibold">
-                    ✨ {generatedImages[0]?.quality}
-                  </span>
+                  <span className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-4 py-2 rounded-full text-sm font-semibold">✨ {result?.quality}</span>
                 </div>
                 <div className="flex gap-3">
-                  <button 
-                    onClick={() => handleDownload(generatedImages[0]?.url, 'merged-result')}
-                    className="flex-1 bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition flex items-center justify-center gap-2 font-semibold"
-                  >
-                    <Download className="w-5 h-5" />
-                    Download Image
+                  <button onClick={() => handleDownload(result?.url, "merged-result")} className="flex-1 bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition flex items-center justify-center gap-2 font-semibold">
+                    <Download className="w-5 h-5" /> Download Image
                   </button>
-                  <button className="flex-1 bg-pink-600 text-white py-3 rounded-lg hover:bg-pink-700 transition flex items-center justify-center gap-2 font-semibold">
-                    <Share2 className="w-5 h-5" />
-                    Share
+                  <button onClick={() => { if (navigator.share) { navigator.share({ title: "My StitchPix Result", url: window.location.href }); } else { navigator.clipboard.writeText(window.location.href); alert("Link copied to clipboard"); } }} className="flex-1 bg-pink-600 text-white py-3 rounded-lg hover:bg-pink-700 transition flex items-center justify-center gap-2 font-semibold">
+                    <Share2 className="w-5 h-5" /> Share
                   </button>
                 </div>
               </div>
@@ -818,16 +741,13 @@ const handleGenerate = async () => {
           </div>
 
           <div className="flex gap-4 justify-center mt-8">
-            <button
-              onClick={handleReset}
-              className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-8 py-3 rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition flex items-center gap-2"
-            >
-              <RefreshCw className="w-5 h-5" />
-              Try Another Dress
-            </button>
+            <button onClick={handleReset} className="bg-gradient-to-r from-purple-600 to-pink-500 text-white px-8 py-3 rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition flex items-center gap-2"><RefreshCw className="w-5 h-5" /> Try Another Dress</button>
           </div>
         </div>
       </div>
     );
   }
+
+  // Fallback (should not happen)
+  return null;
 }
