@@ -15,31 +15,20 @@ import {
   Lock,
 } from "lucide-react";
 
-/**
- * Clean, production-ready single-file App.js (Option 1)
- *
- * - Controlled inputs
- * - Token & user persisted to localStorage
- * - Uses canvas fallback when external APIs fail
- * - Minimal, explicit state (no unused vars)
- * - Small UX touches (loading states, validation)
- *
- * NOTE: Update REACT_APP_STITCHPIX_BACKEND env var or change STITCHPIX_BACKEND value below.
- */
-
-const STITCHPIX_BACKEND = process.env.REACT_APP_STITCHPIX_BACKEND || "https://stitchpix-backend-1.onrender.com";
+const STITCHPIX_BACKEND =
+  process.env.REACT_APP_STITCHPIX_BACKEND ||
+  "https://stitchpix-backend-1.onrender.com";
 
 export default function StitchPixAI() {
   // UI pages
-  const [currentPage, setCurrentPage] = useState("login"); // login | upload | results
+  const [currentPage, setCurrentPage] = useState("login"); 
   const [isSignUp, setIsSignUp] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showApiInput, setShowApiInput] = useState(false);
 
-  // Auth
-  const [user, setUser] = useState(null); // { id, name, email }
-  const [token, setToken] = useState(null);
+  // Auth state (token removed)
+  const [user, setUser] = useState(null); 
   const [authError, setAuthError] = useState("");
   const [isLoadingAuth, setIsLoadingAuth] = useState(false);
 
@@ -49,14 +38,15 @@ export default function StitchPixAI() {
   const [authPassword, setAuthPassword] = useState("");
 
   // App state
-  const [userPhoto, setUserPhoto] = useState(null); // data URL
-  const [dressPhoto, setDressPhoto] = useState(null); // data URL
-  const [generatedImages, setGeneratedImages] = useState([]); // [{id, url, quality, source}]
+  const [userPhoto, setUserPhoto] = useState(null);
+  const [dressPhoto, setDressPhoto] = useState(null);
+  const [generatedImages, setGeneratedImages] = useState([]);
   const [apiKey, setApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("canvas");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+
 
   // Models
   const aiModels = {
