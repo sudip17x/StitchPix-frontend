@@ -3,7 +3,6 @@ import { Upload, ImageIcon, Sparkles, Download, Share2, RefreshCw, LogOut, Chevr
 
 export default function StitchPixAI() {
   // User Management State
-  const [users, setUsers] = useState([]);
   const [currentPage, setCurrentPage] = useState('login');
   const [isSignUp, setIsSignUp] = useState(false);
   const [user, setUser] = useState(null);
@@ -43,20 +42,6 @@ export default function StitchPixAI() {
   const allModels = [...aiModels.free, ...aiModels.paid];
   const currentModelData = allModels.find(m => m.id === selectedModel);
 
-  React.useEffect(() => {
-    setUsers([]);
-  }, []);
-
-  const hashPassword = (password) => {
-    let hash = 0;
-    for (let i = 0; i < password.length; i++) {
-      const char = password.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return hash.toString();
-  };
-
   const isValidEmail = (email) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
@@ -78,7 +63,7 @@ export default function StitchPixAI() {
   if (!isValidPassword(password)) return setAuthError("Password must be at least 6 characters");
 
   try {
-    const response = await fetch("http://localhost:5000/api/auth/signup", {
+    const response = await fetch("https://stitchpix-backend-1.onrender.com/api/auth/signup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, email, password })
@@ -113,7 +98,7 @@ const handleLogin = async () => {
   }
 
   try {
-    const res = await fetch("http://localhost:5000/api/auth/login", {
+    const res = await fetch("https://stitchpixai-4.onrender.com/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password })
